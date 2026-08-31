@@ -1,0 +1,77 @@
+:root{
+  --paper:#f3eee6; --ink:#1a1814; --mute:#6d675c; --line:#ddd4c6;
+  --work:#11100e; --accent:#c45c26; --ok:#2f6f4e;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden}
+body{display:flex;flex-direction:column;font:14px/1.45 Palatino,"Palatino Linotype",Georgia,serif;color:var(--ink);background:var(--paper)}
+.off{display:none !important}
+#rail{
+  flex:none; display:flex; align-items:center; gap:16px;
+  padding:8px 12px; border-bottom:1px solid var(--line); background:var(--paper);
+}
+#nav{display:flex; gap:2px}
+#nav button{
+  text-align:center; border:0; background:transparent; color:var(--mute);
+  padding:6px 12px; border-radius:4px; cursor:pointer; font:600 13px ui-sans-serif,system-ui,sans-serif;
+}
+#nav button.on{background:var(--ink); color:var(--paper)}
+#share{margin-left:auto; display:flex; align-items:center; gap:8px; font-size:12px; color:var(--mute)}
+#model{font:12px ui-monospace,Menlo,monospace; color:var(--ink)}
+#login{
+  border:1px solid var(--ink); background:transparent; color:var(--ink);
+  padding:4px 10px; font:600 12px ui-sans-serif,system-ui; cursor:pointer;
+}
+#stage-wrap{flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; background:var(--work); color:#ece7df; overflow:hidden}
+#gate{
+  padding:12px 18px; background:#2a1810; color:#f3eee6; font:13px ui-sans-serif,system-ui;
+  display:flex; flex-wrap:wrap; gap:10px 16px; align-items:baseline;
+}
+#gate.off{display:none !important}
+#usercode{font:600 16px ui-monospace,Menlo,monospace; letter-spacing:.08em}
+#verify{color:#f3eee6}
+#chrome{flex:none; background:#1c1a17; border-bottom:1px solid #2e2b26}
+#tabs{display:flex; gap:2px; padding:6px 10px 0; overflow-x:auto; min-height:32px}
+.btab{
+  display:flex; align-items:center; gap:8px; max-width:200px;
+  padding:6px 10px; border:0; background:#2a2723; color:#b8b0a4;
+  font:12px ui-sans-serif,system-ui; cursor:pointer; border-radius:4px 4px 0 0;
+}
+.btab.on{background:#11100e; color:#f3eee6}
+.btab .x{opacity:.5; border:0; background:transparent; color:inherit; cursor:pointer}
+#bar{display:flex; gap:8px; padding:8px 12px 10px}
+#url{
+  flex:1; border:0; background:#11100e; color:#f3eee6; padding:8px 12px;
+  font:13px ui-monospace,Menlo,monospace; outline:none;
+}
+#bar button{
+  border:0; background:#2a2723; color:#ece7df; padding:8px 10px;
+  font:600 13px ui-sans-serif,system-ui; cursor:pointer;
+}
+#go{background:var(--accent); color:#fff; padding:8px 14px; font:600 12px ui-sans-serif,system-ui}
+.pane{flex:1; min-height:0; display:flex}
+.pane.off{display:none !important}
+#stage{background:#000; overflow:hidden; position:relative}
+#view{width:100%; height:100%; object-fit:contain; cursor:crosshair; display:block; background:#000; outline:none; touch-action:none; overscroll-behavior:none}
+#view:not([src]), #view[src=""]{visibility:hidden}
+#view-next{position:absolute; width:1px; height:1px; opacity:0; pointer-events:none}
+#live{background:#000; position:relative}
+#rtc{width:100%; height:100%; object-fit:contain; cursor:crosshair; display:block; background:#000; outline:none; touch-action:none; overscroll-behavior:none}
+#rtc:focus{outline:2px solid #c45c26}
+#term{padding:8px; overflow:hidden; min-width:0; min-height:0}
+#term .xterm{width:100%; height:100%}
+#term .xterm-viewport{overflow-y:auto}
+#agent{flex-direction:column; background:#161411}
+#agent-top{display:flex; justify-content:flex-end; padding:10px 14px}
+#newchat{border:1px solid #3a352e; background:transparent; color:#b8b0a4; padding:5px 10px; font:12px ui-sans-serif,system-ui; cursor:pointer}
+#chat{flex:1; overflow:auto; padding:8px 20px 24px; display:flex; flex-direction:column; gap:14px}
+.row{max-width:52em}
+.row.me{align-self:flex-end; color:#f3eee6}
+.row.bot{align-self:flex-start; color:#d9d2c6}
+.row.tool{align-self:stretch; font:12px/1.4 ui-monospace,Menlo,monospace; color:#8a8378; white-space:pre-wrap}
+#ask{display:flex; gap:8px; padding:12px 14px; border-top:1px solid #2e2b26}
+#q{
+  flex:1; border:0; background:#11100e; color:#f3eee6; padding:10px 12px;
+  font:14px ui-sans-serif,system-ui; outline:none;
+}
+#ask button{border:0; background:var(--accent); color:#fff; padding:10px 16px; font:600 12px ui-sans-serif,system-ui; cursor:pointer}

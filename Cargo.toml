@@ -1,0 +1,40 @@
+[package]
+name = "connect-agent"
+version = "0.1.0"
+edition = "2021"
+description = "Connect Agent: Chromium or shell on App; JPEG or WebRTC video"
+license = "MIT"
+default-run = "connect-agent"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+getrandom = "0.2"
+libc = "0.2"
+nix = { version = "0.29", features = ["term", "process", "fs", "signal", "dir"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time", "io-util", "io-std", "process", "sync", "fs"] }
+tokio-stream = "0.1"
+tokio-tungstenite = "0.26"
+tonic = { version = "0.14", features = ["tls-ring"] }
+tonic-prost = "0.14"
+prost = "0.14"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+webrtc = "0.11"
+rcgen = "0.13"
+turn = "0.8"
+webrtc-util = "0.9"
+open = "5"
+provider-grok = { path = "../provider-grok" }
+
+[build-dependencies]
+protoc-bin-vendored = "3"
+tonic-prost-build = "0.14"
+# embed demo-client WASM UI at compile time
+wasm-bindgen-cli-support = "=0.2.127"
