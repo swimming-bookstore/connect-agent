@@ -22,11 +22,12 @@ pub async fn session(
 ) {
     tracing::info!(%channel, "jpeg");
     let (w, h) = video::size(height);
-    let chrome = match Chromium::spawn(w, h).await {
-        Ok(c) => {
+    let chrome = match Chromium::spawn_unless_close(w, h, &mut cmds).await {
+        Ok(Some(c)) => {
             tracing::info!(%channel, "jpeg up");
             c
         }
+        Ok(None) => return,
         Err(e) => {
             tracing::error!("jpeg: {e:#}");
             let _ = plane::send_out(&tx, &dst, &channel, &Out::Error { message: e.to_string() }).await;

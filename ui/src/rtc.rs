@@ -20,6 +20,8 @@ thread_local! {
     static HELLO: RefCell<(u32, u32)> = const { RefCell::new((0, 0)) };
     static ICE_N: RefCell<usize> = const { RefCell::new(0) };
     static GEN: RefCell<u32> = const { RefCell::new(0) };
+    static BAD_ANSWER: RefCell<String> = const { RefCell::new(String::new()) };
+    static STARTING: RefCell<bool> = const { RefCell::new(false) };
 }
 
 pub fn close() {
@@ -31,6 +33,8 @@ pub fn close() {
     });
     HELLO.with(|h| *h.borrow_mut() = (0, 0));
     ICE_N.with(|n| *n.borrow_mut() = 0);
+    BAD_ANSWER.with(|s| s.borrow_mut().clear());
+    STARTING.with(|s| *s.borrow_mut() = false);
     if let Some(w) = web_sys::window() {
         if let Some(d) = w.document() {
             if let Some(el) = d.get_element_by_id("rtc") {
@@ -53,6 +57,9 @@ pub async fn apply(
 ) {
     let have = HELLO.with(|h| *h.borrow());
     if have != (width, height) {
+        if STARTING.with(|s| *s.borrow()) {
+            return;
+        }
         let gen = GEN.with(|g| {
             *g.borrow_mut() += 1;
             *g.borrow()
@@ -64,7 +71,11 @@ pub async fn apply(
         });
         ICE_N.with(|n| *n.borrow_mut() = 0);
         HELLO.with(|h| *h.borrow_mut() = (width, height));
-        match start(servers, video, gen).await {
+        BAD_ANSWER.with(|s| s.borrow_mut().clear());
+        STARTING.with(|s| *s.borrow_mut() = true);
+        let started = start(servers, video, gen).await;
+        STARTING.with(|s| *s.borrow_mut() = false);
+        match started {
             Ok(pc) => {
                 if GEN.with(|g| *g.borrow() != gen) {
                     let _ = pc.close();
@@ -78,16 +89,17 @@ pub async fn apply(
                 }
                 log(&format!("webrtc: {e}"));
                 HELLO.with(|h| *h.borrow_mut() = (0, 0));
+                return;
             }
         }
-        return;
     }
-    if !answer.is_empty() {
+    if !answer.is_empty() && BAD_ANSWER.with(|s| *s.borrow() != answer) {
         let applied = PC.with(|p| p.borrow().as_ref().cloned());
         if let Some(pc) = applied {
             if pc.remote_description().is_none() {
                 if let Err(e) = set_remote_answer(&pc, answer).await {
                     log(&format!("answer: {e}"));
+                    BAD_ANSWER.with(|s| *s.borrow_mut() = answer.to_string());
                     return;
                 }
             }

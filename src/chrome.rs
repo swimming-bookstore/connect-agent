@@ -65,7 +65,6 @@ pub(crate) struct Snap {
 impl Chromium {
     pub fn reap_stale() {
         let prefix = "connect-agent-chrome-";
-        let me = std::process::id().to_string();
         let Ok(rd) = std::fs::read_dir("/var/tmp") else {
             return;
         };
@@ -73,11 +72,6 @@ impl Chromium {
             let name = ent.file_name();
             let name = name.to_string_lossy();
             if !name.starts_with(prefix) {
-                continue;
-            }
-            let rest = &name[prefix.len()..];
-            let pid = rest.split('-').next().unwrap_or("");
-            if pid == me {
                 continue;
             }
             let path = ent.path();
@@ -145,9 +139,14 @@ impl Chromium {
         let child = cmd
             .spawn()
             .with_context(|| format!("spawn {}", bin.display()))?;
+        let mut child = KillOnDrop {
+            child: Some(child),
+            user_data: user_data.clone(),
+        };
 
         let ws = wait_browser_ws(port).await?;
         let (cmd, frames, last, tabs) = attach(ws, width, height).await?;
+        let child = child.child.take().ok_or_else(|| anyhow!("chromium child"))?;
         Ok(Self {
             child,
             cmd,
@@ -156,6 +155,36 @@ impl Chromium {
             tabs,
             user_data,
         })
+    }
+
+    /// Same as spawn, but Close (or a dropped channel) aborts and kills Chromium.
+    pub async fn spawn_unless_close(
+        width: u32,
+        height: u32,
+        cmds: &mut mpsc::Receiver<crate::protocol::In>,
+    ) -> Result<Option<Self>> {
+        let work = Self::spawn(width, height);
+        tokio::pin!(work);
+        loop {
+            tokio::select! {
+                biased;
+                cmd = cmds.recv() => match cmd {
+                    None | Some(crate::protocol::In::Close) => return Ok(None),
+                    Some(_) => {}
+                },
+                r = &mut work => {
+                    let chrome = r?;
+                    loop {
+                        match cmds.try_recv() {
+                            Ok(crate::protocol::In::Close)
+                            | Err(mpsc::error::TryRecvError::Disconnected) => return Ok(None),
+                            Ok(_) => {}
+                            Err(mpsc::error::TryRecvError::Empty) => return Ok(Some(chrome)),
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
@@ -346,16 +375,40 @@ impl Chromium {
 
 impl Drop for Chromium {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        if let Some(pid) = self.child.id() {
-            let _ = nix::sys::signal::killpg(
-                nix::unistd::Pid::from_raw(pid as i32),
-                nix::sys::signal::Signal::SIGKILL,
-            );
-        }
-        let _ = self.child.start_kill();
-        let _ = std::fs::remove_dir_all(&self.user_data);
+        kill_chrome(&mut self.child, &self.user_data);
     }
+}
+
+/// Kills Chromium if spawn is cancelled before `Self` is built.
+struct KillOnDrop {
+    child: Option<Child>,
+    user_data: PathBuf,
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            kill_chrome(&mut child, &self.user_data);
+        }
+    }
+}
+
+fn kill_chrome(child: &mut Child, user_data: &PathBuf) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        let _ = nix::sys::signal::killpg(
+            nix::unistd::Pid::from_raw(pid as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+    let _ = child.start_kill();
+    for _ in 0..40 {
+        match child.try_wait() {
+            Ok(Some(_)) | Err(_) => break,
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    let _ = std::fs::remove_dir_all(user_data);
 }
 
 fn chrome_url(url: &str) -> String {
@@ -738,7 +791,7 @@ async fn wait_browser_ws(port: u16) -> Result<String> {
         .no_proxy()
         .timeout(Duration::from_secs(2))
         .build()?;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
     loop {
         if let Ok(v) = client.get(&url).send().await {
             if let Ok(j) = v.json::<Value>().await {

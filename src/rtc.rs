@@ -180,15 +180,8 @@ impl Rtc {
         pc.set_remote_description(RTCSessionDescription::offer(offer.to_string())?)
             .await
             .context("set remote offer")?;
-        let mut gather = pc.gathering_complete_promise().await;
         let answer = pc.create_answer(None).await.context("create answer")?;
         pc.set_local_description(answer).await?;
-        tokio::select! {
-            _ = gather.recv() => {}
-            _ = tokio::time::sleep(Duration::from_secs(2)) => {
-                tracing::info!(width, height, "ice gather timeout");
-            }
-        }
         let sdp = pc
             .local_description()
             .await
