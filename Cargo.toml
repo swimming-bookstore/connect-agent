@@ -31,7 +31,7 @@ rcgen = "0.13"
 turn = "0.8"
 webrtc-util = "0.9"
 open = "5"
-provider-grok = { path = "../provider-grok" }
+provider-grok = { git = "https://github.com/swimming-bookstore/fun-coding-agent", package = "provider-grok" }
 
 [build-dependencies]
 protoc-bin-vendored = "3"

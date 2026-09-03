@@ -70,6 +70,10 @@ struct View {
     answer: String,
     width: u32,
     height: u32,
+    /// Height asked in Open. Hello for another size is from a session we already closed.
+    height_want: u32,
+    /// Offer in flight; the next Answer is for this PC.
+    want_answer: bool,
     log: Vec<String>,
     thread: Vec<Value>,
 }
@@ -251,36 +255,51 @@ fn on_app(view: &watch::Sender<View>, tx: &mpsc::Sender<ClientMsg>, a: App) {
                 height,
                 ..
             } => {
-                g.kind = match kind {
+                let kind = match kind {
                     Kind::Browser => "browser",
                     Kind::Shell => "shell",
                     Kind::Agent => "agent",
-                }
-                .into();
-                g.video = match video {
+                };
+                let video = match video {
                     Video::Webrtc => "webrtc",
                     Video::Jpeg => "jpeg",
                     Video::None => "none",
+                };
+                if kind != g.kind || video != g.video {
+                    return;
                 }
-                .into();
+                if video == "webrtc" {
+                    let want = if g.height_want >= 1080 { 1080 } else { 720 };
+                    if height != want {
+                        return;
+                    }
+                }
                 g.width = width;
                 g.height = height;
                 g.offer.clear();
                 g.answer.clear();
                 g.ice.clear();
+                g.want_answer = false;
             }
-            Out::Answer { sdp } => g.answer = sdp,
+            Out::Answer { sdp } => {
+                if g.want_answer {
+                    g.answer = sdp;
+                    g.want_answer = false;
+                }
+            }
             Out::Ice {
                 candidate,
                 sdp_mid,
                 sdp_mline_index,
             } => {
-                g.ice.push(serde_json::json!({
-                    "type": "ice",
-                    "candidate": candidate,
-                    "sdp_mid": sdp_mid,
-                    "sdp_mline_index": sdp_mline_index,
-                }));
+                if !g.answer.is_empty() {
+                    g.ice.push(serde_json::json!({
+                        "type": "ice",
+                        "candidate": candidate,
+                        "sdp_mid": sdp_mid,
+                        "sdp_mline_index": sdp_mline_index,
+                    }));
+                }
             }
             Out::AiChat { .. } => {
                 g.thread.clear();
@@ -378,8 +397,9 @@ async fn open(
         g.last.clear();
         g.tabs = serde_json::json!([]);
         g.url.clear();
-        g.width = if height >= 1080 { 1920 } else { 1280 };
-        g.height = if height >= 1080 { 1080 } else { 720 };
+        g.width = 0;
+        g.height = 0;
+        g.height_want = height;
         if kind == Kind::Agent {
             g.log.clear();
             g.thread.clear();
@@ -393,6 +413,7 @@ async fn send_in(tx: &mpsc::Sender<ClientMsg>, view: &watch::Sender<View>, cmd: 
         patch(view, |g| {
             g.answer.clear();
             g.ice.clear();
+            g.want_answer = matches!(cmd, In::Offer { .. });
         });
     }
     let (dst, ch) = {
@@ -522,17 +543,8 @@ async fn serve(
             }
             _ => {
                 if let Ok(cmd) = serde_json::from_value::<In>(v) {
-                    match &cmd {
-                        In::Stdin { .. } | In::Resize { .. } => {
-                            if let Err(e) = wait_session(&view, "shell").await {
-                                tracing::warn!("shell cmd: {e:#}");
-                            } else {
-                                let _ = send_in(&tx, &view, &cmd).await;
-                            }
-                        }
-                        _ => {
-                            let _ = send_in(&tx, &view, &cmd).await;
-                        }
+                    if let Err(e) = forward(&tx, &view, &cmd).await {
+                        tracing::warn!("cmd: {e:#}");
                     }
                 }
             }
@@ -568,6 +580,20 @@ async fn ask(tx: &mpsc::Sender<ClientMsg>, view: &watch::Sender<View>, text: &st
         }
     }
     let _ = send_in(tx, view, &In::AiUser { text: text.into() }).await;
+}
+
+async fn forward(tx: &mpsc::Sender<ClientMsg>, view: &watch::Sender<View>, cmd: &In) -> Result<()> {
+    match cmd {
+        In::Stdin { .. } | In::Resize { .. } => wait_session(view, "shell").await?,
+        In::Offer { .. } | In::Ice { .. } => {
+            let g = view.borrow();
+            if g.kind != "browser" || g.channel.is_empty() || g.width == 0 {
+                return Ok(());
+            }
+        }
+        _ => {}
+    }
+    send_in(tx, view, cmd).await
 }
 
 async fn wait_session(view: &watch::Sender<View>, kind: &str) -> Result<()> {

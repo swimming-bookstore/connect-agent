@@ -1930,9 +1930,10 @@ checksum = "95067976aca6421a523e491fce939a3e65249bac4b977adee0ee9771568e8aa3"
 [[package]]
 name = "provider-grok"
 version = "0.1.0"
+source = "git+https://github.com/swimming-bookstore/fun-coding-agent#44965cb16cfaa6b9b4a63420d0b081d2f5d71e0b"
 dependencies = [
  "anyhow",
- "clap",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

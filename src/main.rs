@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 
 use connect_agent::chrome::Chromium;
@@ -52,6 +52,7 @@ struct Slot {
     peer: String,
     gen: u64,
     tx: mpsc::Sender<In>,
+    gone: Option<oneshot::Receiver<()>>,
 }
 
 #[tokio::main]
@@ -152,7 +153,7 @@ async fn on_app(
     let ch = a.channel;
     let dst = a.src;
     if matches!(raw, In::Close) {
-        if let Some(s) = sessions.remove(&ch) {
+        if let Some(s) = sessions.get(&ch) {
             let _ = s.tx.try_send(In::Close);
             tracing::info!(channel = %ch, "close");
         }
@@ -160,9 +161,10 @@ async fn on_app(
     }
     sessions.retain(|_, s| !s.tx.is_closed());
     if matches!(raw, In::Open { .. }) {
-        if let Some(s) = sessions.remove(&ch) {
+        let prev = sessions.remove(&ch).map(|s| {
             let _ = s.tx.try_send(In::Close);
-        }
+            s.gone
+        });
         if sessions.len() >= max {
             tracing::warn!(channel = %ch, n = sessions.len(), max, "cap");
             let _ = plane::send_out(tx, &dst, &ch, &Out::Error { message: format!("cap ({max})") }).await;
@@ -175,10 +177,17 @@ async fn on_app(
         let gen = *next_gen;
         *next_gen += 1;
         let _ = in_tx.send(cmd).await;
-        sessions.insert(ch.clone(), Slot { peer: dst.clone(), gen, tx: in_tx });
+        let (gone_tx, gone_rx) = oneshot::channel();
+        sessions.insert(ch.clone(), Slot { peer: dst.clone(), gen, tx: in_tx, gone: Some(gone_rx) });
         let done = done_tx.clone();
         let plane_tx = tx.clone();
         tokio::spawn(async move {
+            if let Some(Some(prev)) = prev {
+                let _ = prev.await;
+            }
+            if kind == Kind::Browser {
+                Chromium::reap_stale();
+            }
             match (kind, video) {
                 (Kind::Shell, _) => shell_session(ch.clone(), dst, plane_tx, in_rx, idle).await,
                 (Kind::Agent, _) => code::session(ch.clone(), dst, plane_tx, in_rx, idle).await,
@@ -190,6 +199,7 @@ async fn on_app(
                     jpeg::session(ch.clone(), dst, plane_tx, in_rx, idle, height).await
                 }
             }
+            let _ = gone_tx.send(());
             let _ = done.send((ch, gen)).await;
         });
         return;
@@ -210,8 +220,10 @@ async fn webrtc_session(
     h: u32,
 ) {
     tracing::info!(%channel, width = w, height = h, "webrtc");
-    let chrome = match Chromium::spawn(w, h).await {
-        Ok(c) => c,
+    // Previous Chromium is already dead (Open waits for it). Spawn this one, then ICE.
+    let chrome = match Chromium::spawn_unless_close(w, h, &mut cmds).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return,
         Err(e) => {
             tracing::error!("chrome: {e:#}");
             let _ = plane::send_out(&tx, &dst, &channel, &Out::Error { message: e.to_string() }).await;
@@ -246,8 +258,9 @@ async fn webrtc_session(
                 if !idle.is_zero() { deadline = tokio::time::Instant::now() + idle; }
                 match cmd {
                     In::Offer { sdp } => {
-                        match Rtc::answer(ice.clone(), w, h, &sdp).await {
-                            Ok(v) => break v,
+                        match answer_until_close(ice.clone(), w, h, sdp, &mut cmds, &mut pending_ice).await {
+                            Ok(Some(v)) => break v,
+                            Ok(None) => return,
                             Err(e) => {
                                 tracing::error!("webrtc answer: {e:#}");
                                 let _ = plane::send_out(&tx, &dst, &channel, &Out::Error { message: format!("webrtc: {e}") }).await;
@@ -287,14 +300,15 @@ async fn webrtc_session(
                 match cmd {
                     In::Offer { sdp } => {
                         tracing::info!("renegotiate");
-                        match Rtc::answer(ice.clone(), w, h, &sdp).await {
-                            Ok((new_rtc, answer, new_ice)) => {
+                        match answer_until_close(ice.clone(), w, h, sdp, &mut cmds, &mut pending_ice).await {
+                            Ok(Some((new_rtc, answer, new_ice))) => {
                                 ice_rx = new_ice;
                                 rtc = attach_rtc(new_rtc, &chrome);
                                 if plane::send_out(&tx, &dst, &channel, &Out::Answer { sdp: answer }).await.is_err() {
                                     break;
                                 }
                             }
+                            Ok(None) => break,
                             Err(e) => tracing::warn!("renegotiate: {e:#}"),
                         }
                     }
@@ -319,6 +333,47 @@ async fn webrtc_session(
             _ = tokio::time::sleep_until(deadline), if !idle.is_zero() => {
                 tracing::info!(%channel, "idle");
                 break;
+            }
+        }
+    }
+}
+
+async fn answer_until_close(
+    ice: Ice,
+    w: u32,
+    h: u32,
+    sdp: String,
+    cmds: &mut mpsc::Receiver<In>,
+    pending_ice: &mut Vec<(String, Option<String>, Option<u16>)>,
+) -> Result<Option<(Rtc, String, mpsc::Receiver<Out>)>> {
+    let work = Rtc::answer(ice, w, h, &sdp);
+    tokio::pin!(work);
+    loop {
+        tokio::select! {
+            biased;
+            cmd = cmds.recv() => match cmd {
+                None | Some(In::Close) => return Ok(None),
+                Some(In::Ice { candidate, sdp_mid, sdp_mline_index }) => {
+                    pending_ice.push((candidate, sdp_mid, sdp_mline_index));
+                }
+                Some(_) => {}
+            },
+            r = &mut work => {
+                loop {
+                    match cmds.try_recv() {
+                        Ok(In::Close) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                            return Ok(None);
+                        }
+                        Ok(In::Ice {
+                            candidate,
+                            sdp_mid,
+                            sdp_mline_index,
+                        }) => pending_ice.push((candidate, sdp_mid, sdp_mline_index)),
+                        Ok(_) => {}
+                        Err(mpsc::error::TryRecvError::Empty) => break,
+                    }
+                }
+                return Ok(Some(r?));
             }
         }
     }

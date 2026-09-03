@@ -1,4 +1,6 @@
-//! Grok login on the laptop. Completions for the box coding agent run here; tokens stay here.
+//! Grok login on the laptop. Completions for the box coding agent run here.
+//! Tokens default to `$XDG_DATA_HOME/fun/auth.json` (same file as fun-coding-agent).
+//! Override with `PROVIDER_GROK_AUTH`.
 
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
